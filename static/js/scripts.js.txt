@@ -1,0 +1,178 @@
+// scripts.js
+
+let synth = window.speechSynthesis;
+let voices = [];
+let selectedVoice = null;
+let rate = 1;
+let volume = 1;
+
+// Fetch phrases and preferences from the server
+document.addEventListener('DOMContentLoaded', () => {
+    fetch('/get_preferences')
+        .then(response => response.json())
+        .then(data => {
+            populateVoices();
+            populatePhrases(data.phrases);
+            rate = data.preferences.rate;
+            volume = data.preferences.volume;
+            document.getElementById('rateRange').value = rate;
+            document.getElementById('volumeRange').value = volume;
+            document.getElementById('rateValue').innerText = rate;
+            document.getElementById('volumeValue').innerText = volume;
+        });
+
+    // Populate voice list once voices are loaded
+    if (synth.onvoiceschanged !== undefined) {
+        synth.onvoiceschanged = () => {
+            voices = synth.getVoices();
+            populateVoices();
+        };
+    }
+});
+
+// Populate Voice Selection Dropdown
+function populateVoices() {
+    voices = synth.getVoices();
+    const voiceSelect = document.getElementById('voiceSelect');
+    voiceSelect.innerHTML = '';
+    voices.forEach((voice, index) => {
+        let option = document.createElement('option');
+        option.textContent = `${voice.name} (${voice.lang})`;
+        option.value = index;
+        voiceSelect.appendChild(option);
+    });
+    // Set default voice
+    if (voices.length > 0) {
+        selectedVoice = voices[0];
+    }
+    // Select saved voice if available
+    fetch('/get_preferences')
+        .then(response => response.json())
+        .then(data => {
+            if (data.preferences.voice !== 'default') {
+                const savedVoiceName = data.preferences.voice;
+                const voiceIndex = voices.findIndex(v => v.name === savedVoiceName);
+                if (voiceIndex !== -1) {
+                    voiceSelect.selectedIndex = voiceIndex;
+                    selectedVoice = voices[voiceIndex];
+                }
+            }
+        });
+}
+
+// Populate Phrase Buttons
+function populatePhrases(phrases) {
+    const container = document.getElementById('phraseContainer');
+    container.innerHTML = '';
+    phrases.forEach(phrase => {
+        let col = document.createElement('div');
+        col.className = 'col-md-3';
+        let button = document.createElement('button');
+        button.className = 'btn btn-success phrase-button';
+        button.innerText = phrase.text;
+        if (phrase.image) {
+            let img = document.createElement('img');
+            img.src = phrase.image;
+            button.appendChild(img);
+        }
+        button.addEventListener('click', () => speak(phrase.text));
+        // Right-click to set image
+        button.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            selectedPhraseInput.value = phrase.text;
+            imageUploadModal.show();
+        });
+        col.appendChild(button);
+        container.appendChild(col);
+    });
+}
+
+// Speak Function using Web Speech API
+function speak(text) {
+    if (synth.speaking) {
+        console.error('speechSynthesis.speaking');
+        return;
+    }
+    if (text !== '') {
+        let utterThis = new SpeechSynthesisUtterance(text);
+        utterThis.onend = function (event) {
+            console.log('SpeechSynthesisUtterance.onend');
+        }
+        utterThis.onerror = function (event) {
+            console.error('SpeechSynthesisUtterance.onerror');
+        }
+        utterThis.rate = rate;
+        utterThis.volume = volume;
+        if (selectedVoice) {
+            utterThis.voice = selectedVoice;
+        }
+        synth.speak(utterThis);
+    }
+}
+
+// Handle Voice Selection Change
+document.getElementById('voiceSelect').addEventListener('change', (e) => {
+    selectedVoice = voices[e.target.value];
+    // Optionally, save the selected voice to preferences via an API call
+    // Not implemented in this example
+});
+
+// Handle Rate Change
+document.getElementById('rateRange').addEventListener('input', (e) => {
+    rate = parseFloat(e.target.value);
+    document.getElementById('rateValue').innerText = rate;
+});
+
+// Handle Volume Change
+document.getElementById('volumeRange').addEventListener('input', (e) => {
+    volume = parseFloat(e.target.value);
+    document.getElementById('volumeValue').innerText = volume;
+});
+
+// Handle Add Phrase Form Submission
+document.getElementById('addPhraseForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    let newPhrase = document.getElementById('newPhrase').value.trim();
+    if (newPhrase === '') {
+        alert('Please enter a valid phrase.');
+        return;
+    }
+    fetch('/add_phrase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `phrase=${encodeURIComponent(newPhrase)}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            populatePhrases(data.phrases);
+            document.getElementById('newPhrase').value = '';
+        } else {
+            alert(data.message);
+        }
+    });
+});
+
+// Image Upload Modal References
+const imageUploadModal = new bootstrap.Modal(document.getElementById('imageUploadModal'));
+const uploadImageForm = document.getElementById('uploadImageForm');
+const selectedPhraseInput = document.getElementById('selectedPhrase');
+
+// Handle Image Upload Form Submission
+uploadImageForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    let formData = new FormData(uploadImageForm);
+    fetch('/upload_image', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            populatePhrases(data.phrases); // Refresh phrases to show the new image
+            imageUploadModal.hide();
+        } else {
+            alert(data.message);
+        }
+    });
+});
